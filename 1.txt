@@ -1,0 +1,103 @@
+# backend/app.py
+
+import os
+import io
+from flask import Flask, request, jsonify, send_from_directory
+import fitz  # PyMuPDF
+import base64
+
+app = Flask(__name__, static_folder='../frontend', static_url_path='/')
+
+# --- Local Directory Configuration (NEW) ---
+PDF_SOURCE_DIR = r'Z:\IT\Seif El Din Khaled Eid'  # Use raw string to handle backslashes correctly on Windows
+
+# This folder is now only used for the file upload feature.
+PDF_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pdfs')
+if not os.path.exists(PDF_FOLDER):
+    os.makedirs(PDF_FOLDER)
+
+ALLOWED_EXTENSIONS = {'pdf'}
+
+def allowed_file(filename):
+    """Check if the uploaded file has an allowed extension."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def process_pdf_to_images(file_stream):
+    """Convert PDF byte stream to base64-encoded PNG images."""
+    try:
+        doc = fitz.open(stream=file_stream, filetype="pdf")
+        image_pages = []
+        for page_num in range(doc.page_count):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap()
+            img_bytes = pix.pil_tobytes(format="PNG")
+            base64_image = base64.b64encode(img_bytes).decode('utf-8')
+            image_pages.append(base64_image)
+        doc.close()
+        return image_pages
+    except Exception as e:
+        print(f"Error processing PDF from stream: {e}")
+        return None
+
+# --- Static File Routes ---
+
+@app.route('/')
+def serve_index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(app.static_folder, filename)
+
+# --- NEW: Load PDF from local path (e.g., Z:\IT\Seif El Din Khaled Eid) ---
+
+@app.route('/pdf_images/<path:pdf_filename>', methods=['GET'])
+def get_pdf_images(pdf_filename):
+    """
+    Loads the specified PDF from the local folder (Z:\IT\Seif El Din Khaled Eid),
+    processes it to images, and returns them as base64 strings.
+    """
+    try:
+        full_path = os.path.join(PDF_SOURCE_DIR, pdf_filename)
+
+        if not os.path.isfile(full_path):
+            return jsonify({"error": "PDF file not found."}), 404
+
+        with open(full_path, 'rb') as f:
+            file_stream = io.BytesIO(f.read())
+
+        images = process_pdf_to_images(file_stream)
+        if images is None:
+            return jsonify({"error": "Failed to process PDF."}), 500
+
+        return jsonify({"images": images})
+    except Exception as e:
+        print(f"Error loading PDF from local path: {e}")
+        return jsonify({"error": f"Internal server error: {e}"}), 500
+
+# --- Upload from User (Unchanged) ---
+
+@app.route('/upload_pdf', methods=['POST'])
+def upload_pdf():
+    if 'pdf_file' not in request.files:
+        return jsonify({"error": "No file part in the request."}), 400
+
+    file = request.files['pdf_file']
+
+    if file.filename == '':
+        return jsonify({"error": "No file selected."}), 400
+
+    if file and allowed_file(file.filename):
+        file_stream = io.BytesIO(file.read())
+        images = process_pdf_to_images(file_stream)
+        if images is None:
+            return jsonify({"error": "Failed to process the uploaded PDF."}), 500
+
+        return jsonify({"images": images})
+    else:
+        return jsonify({"error": "Invalid file type. Only PDF files are allowed."}), 400
+
+# --- Run Server ---
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
