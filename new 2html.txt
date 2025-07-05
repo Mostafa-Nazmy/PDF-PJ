@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DLP Secured PDF Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for potential overrides or specific elements */
+        body {
+            font-family: "Inter", sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        #pdfCanvasContainer {
+            border: 1px solid #e0e0e0;
+            border-radius: 0.5rem;
+            overflow-y: auto;
+            background-color: #f8fafc;
+            width: 100%;
+            height: calc(100vh - 220px); /* Adjusted height for more controls */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 1rem;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+        }
+        .pdf-page-canvas {
+            background-color: white;
+            border: 1px solid #cbd5e0;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border-radius: 0.5rem;
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen flex flex-col items-center p-6">
+
+    <div class="container mx-auto bg-white p-8 rounded-xl shadow-2xl max-w-4xl w-full">
+        <img src="images/Screenshot 2025-07-04 154658.png" alt="Company Logo" class="h-16">         
+        <div class="flex justify-center mb-4"></div>
+        <h1 class="text-4xl font-extrabold text-center text-gray-900 mb-6 drop-shadow-sm">
+            🛡️ DLP Secured PDF Viewer
+        </h1>
+        <p class="text-center text-gray-600 mb-8 max-w-2xl mx-auto">
+            <span class="font-semibold text-red-600"></span>
+        </p>
+
+        <div class="flex flex-col sm:flex-row gap-4 mb-4 justify-center items-center">
+            <label for="pdfFileInput" class="w-full sm:w-auto px-4 py-2 bg-gray-100 text-gray-700 font-semibold rounded-md border border-gray-300 shadow-sm cursor-pointer hover:bg-gray-200 transition-all duration-200 text-center">
+                <span id="fileNameLabel">Choose a PDF file...</span>
+                <input type="file" id="pdfFileInput" accept="application/pdf" class="hidden">
+            </label>
+            <button
+                id="uploadPdfBtn"
+                class="w-full sm:w-auto px-6 py-3 bg-green-600 text-white font-semibold rounded-md shadow-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-200 active:bg-green-800 transform active:scale-95"
+            >
+                Upload & View
+            </button>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-4 mb-8 justify-center">
+            <input
+                type="text"
+                id="pdfFileNameInput"
+                placeholder="Or enter filename from server (e.g., guide.pdf)"
+                class="flex-grow p-3 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+            />
+            <button
+                id="loadPdfBtn"
+                class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-md shadow-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 active:bg-blue-800 transform active:scale-95"
+            >
+                Load from Server
+            </button>
+        </div>
+
+        <div id="loadingIndicator" class="hidden text-center text-blue-600 font-medium mb-4">
+            Loading PDF... Please wait.
+        </div>
+
+        <div id="pdfCanvasContainer" class="relative">
+            <p id="noPdfMessage" class="absolute inset-0 flex items-center justify-center text-gray-500 text-lg">
+                No PDF loaded. Use one of the options above.
+            </p>
+        </div>
+
+        <div id="messageBox" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                <p id="messageBoxContent" class="text-lg font-medium text-gray-800 mb-4"></p>
+                <button id="messageBoxCloseBtn" class="px-5 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    OK
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const pdfFileNameInput = document.getElementById('pdfFileNameInput');
+            const loadPdfBtn = document.getElementById('loadPdfBtn');
+            const pdfFileInput = document.getElementById('pdfFileInput');
+            const uploadPdfBtn = document.getElementById('uploadPdfBtn');
+            const fileNameLabel = document.getElementById('fileNameLabel');
+            const pdfCanvasContainer = document.getElementById('pdfCanvasContainer');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const noPdfMessage = document.getElementById('noPdfMessage');
+            const messageBox = document.getElementById('messageBox');
+            const messageBoxContent = document.getElementById('messageBoxContent');
+            const messageBoxCloseBtn = document.getElementById('messageBoxCloseBtn');
+
+            // --- Utility function for custom message box ---
+            function showMessageBox(message) {
+                messageBoxContent.textContent = message;
+                messageBox.classList.remove('hidden');
+            }
+
+            messageBoxCloseBtn.addEventListener('click', () => {
+                messageBox.classList.add('hidden');
+            });
+
+            // --- Common PDF Rendering Function ---
+            async function renderPdfImages(images) {
+                pdfCanvasContainer.innerHTML = ''; // Clear previous PDF
+                noPdfMessage.classList.add('hidden'); // Hide message
+                loadingIndicator.classList.add('hidden'); // Hide loading indicator
+
+                if (images.length === 0) {
+                    showMessageBox('No pages found in the PDF or PDF is empty.');
+                    noPdfMessage.classList.remove('hidden');
+                    return;
+                }
+
+                // Render each image onto its own canvas
+                images.forEach(base64Image => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.classList.add('pdf-page-canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        const containerWidth = pdfCanvasContainer.clientWidth - 32;
+                        const scaleFactor = containerWidth / img.width;
+                        canvas.width = containerWidth;
+                        canvas.height = img.height * scaleFactor;
+
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        pdfCanvasContainer.appendChild(canvas);
+                    };
+                    img.onerror = () => {
+                        console.error('Error loading image.');
+                        showMessageBox('Failed to load one or more PDF pages as images.');
+                    };
+                    img.src = `data:image/png;base64,${base64Image}`;
+                });
+            }
+
+            // --- Load from Server Logic ---
+            loadPdfBtn.addEventListener('click', async () => {
+                const pdfFileName = pdfFileNameInput.value.trim();
+                if (!pdfFileName) {
+                    showMessageBox('Please enter a PDF filename from the server.');
+                    return;
+                }
+
+                loadingIndicator.classList.remove('hidden');
+                
+                try {
+                    const response = await fetch(`/pdf_images/${pdfFileName}`);
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to load PDF images.');
+                    }
+                    const data = await response.json();
+                    renderPdfImages(data.images);
+                } catch (error) {
+                    console.error('Error:', error);
+                    showMessageBox(`Error loading PDF: ${error.message}`);
+                    noPdfMessage.classList.remove('hidden');
+                    loadingIndicator.classList.add('hidden');
+                }
+            });
+
+            // --- File Input Logic ---
+            pdfFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    fileNameLabel.textContent = file.name;
+                } else {
+                    fileNameLabel.textContent = 'Choose a PDF file...';
+                }
+            });
+
+            uploadPdfBtn.addEventListener('click', async () => {
+                const file = pdfFileInput.files[0];
+                if (!file) {
+                    showMessageBox('Please select a PDF file to upload.');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('pdf_file', file);
+
+                loadingIndicator.classList.remove('hidden');
+
+                try {
+                    const response = await fetch('/upload_pdf', {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to upload PDF.');
+                    }
+                    const data = await response.json();
+                    renderPdfImages(data.images);
+                } catch (error) {
+                    console.error('Error:', error);
+                    showMessageBox(`Error uploading PDF: ${error.message}`);
+                    loadingIndicator.classList.add('hidden');
+                    noPdfMessage.classList.remove('hidden');
+                }
+            });
+
+            // --- DLP (Data Loss Prevention) Features ---
+            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            if (!isLocalhost) {
+                // Disable Right-click, Ctrl+C, Ctrl+P, etc.
+                document.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    showMessageBox('Right-click is disabled for DLP purposes.');
+                });
+
+                document.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'a' || e.key === 'p' || e.key === 's' || e.key === 'u')) {
+                        e.preventDefault();
+                        showMessageBox('This action is disabled for DLP purposes.');
+                    }
+                });
+
+                // Disable Text Selection
+                document.body.style.userSelect = 'none'; // Prevent text selection on the body level
+                document.body.style.webkitUserSelect = 'none';
+                document.body.style.mozUserSelect = 'none';
+                document.body.style.msUserSelect = 'none';
+
+                // Disable PDF Download (if any links to PDF exist)
+                const links = document.querySelectorAll('a');
+                links.forEach(link => {
+                    if (link.href && link.href.endsWith('.pdf')) {
+                        link.addEventListener('click', (e) => {
+                            e.preventDefault(); // Prevent downloading
+                            showMessageBox('Downloading PDF is disabled for DLP purposes.');
+                        });
+                    }
+                });
+
+                // Disable Dragging
+                document.addEventListener('dragstart', (e) => e.preventDefault());
+                document.addEventListener('drop', (e) => e.preventDefault());
+
+                // Disable dragging PDFs from canvas
+                pdfCanvasContainer.addEventListener('dragstart', (e) => {
+                    if (e.target.tagName === 'CANVAS' || e.target.tagName === 'IMG') {
+                        e.preventDefault();
+                        showMessageBox('Dragging images is disabled for DLP purposes.');
+                    }
+                });
+            }
+        });
+    </script>
+
+</body>
+</html>
